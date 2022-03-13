@@ -37,7 +37,7 @@ where
 {
     use CmdLinePart::*;
     args.into_iter().map(|e| match e {
-        text if text.as_ref().to_str() == Some("{}") => Placeholder,
+        text if text.as_ref().to_str() == Some("{image}") => Placeholder,
         text => Literal(text.as_ref().to_os_string()),
     })
 }
@@ -86,7 +86,7 @@ impl ApplicationState {
 #[tokio::main]
 async fn main() {
     let mut state = ApplicationState::new(
-        "echo hello {}".split(' '),
+        "echo hello {image}".split(' '),
         time::interval(Duration::from_millis(500)),
     )
     .unwrap();
