@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.17", features = ["full"] }
 rumqttc = "*"
+rand = "0.8.5"

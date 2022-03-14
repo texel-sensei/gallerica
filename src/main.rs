@@ -4,8 +4,10 @@
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
-    path::PathBuf,
+    path::PathBuf, fs::read_dir,
 };
+
+use rand::prelude::*;
 
 use tokio::{
     process::Command,
@@ -20,6 +22,10 @@ enum CmdLinePart {
 struct Gallery {
     name: String,
     sources: Vec<PathBuf>,
+}
+
+impl Gallery {
+    fn new(name: String) -> Self { Self { name, sources: vec![] } }
 }
 
 struct ApplicationState {
@@ -68,18 +74,52 @@ impl ApplicationState {
         })
     }
 
+    pub fn register_folder(&mut self, gallery: String, folder: PathBuf)
+    {
+        // TODO: figure out how to get rid of this clone
+        let selected_gallery = self.galleries.entry(gallery.clone()).or_insert(Gallery::new(gallery.clone()));
+        selected_gallery.sources.push(folder);
+
+        if self.current_gallery.is_none() {
+            self.current_gallery = Some(gallery);
+        }
+    }
+
     pub async fn update(&mut self) {
         let mut cmd = Command::new(&self.display_command);
 
-        let replacement: &OsStr = "Test image".as_ref();
+        let replacement = match self.select_random_image() {
+            Some(path) => path,
+            None => return,
+        };
 
         use CmdLinePart::*;
         cmd.args(self.display_args.iter().map(|ref a| match a {
             Literal(t) => t.as_ref(),
-            Placeholder => replacement,
+            Placeholder => {
+                let repl: &OsStr = replacement.as_ref();
+                repl
+            },
         }));
 
         cmd.spawn().unwrap().wait().await.unwrap();
+    }
+
+    fn select_random_image(&self) -> Option<PathBuf> {
+        let source_folders = &self.galleries.get(self.current_gallery.as_ref()?)?.sources;
+
+        let mut rng = rand::thread_rng();
+
+        let all_files: Vec<PathBuf> = 
+            source_folders.iter()
+            .filter_map(|dir| read_dir(dir).ok())
+            .flatten()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .collect();
+
+
+        all_files.into_iter().choose(&mut rng)
     }
 }
 
@@ -90,6 +130,9 @@ async fn main() {
         time::interval(Duration::from_millis(500)),
     )
     .unwrap();
+
+    state.register_folder("test".to_owned(), ".".to_string().into());
+
     state.update().await;
     state.update().await;
 }
