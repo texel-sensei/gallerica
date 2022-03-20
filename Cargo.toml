@@ -9,3 +9,5 @@ edition = "2021"
 tokio = { version = "1.17", features = ["full"] }
 rumqttc = "*"
 rand = "0.8.5"
+serde = { version="1.0.136", features = ["derive"] }
+toml = "0.5.8"

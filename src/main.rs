@@ -4,14 +4,17 @@
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
-    path::PathBuf, fs::read_dir,
+    fs::read_dir,
+    path::{Path, PathBuf}, io::Read,
 };
 
 use rand::prelude::*;
+use serde::Deserialize;
 
 use tokio::{
     process::Command,
-    time::{self, Duration, Interval}, select,
+    select,
+    time::{self, Duration, Interval},
 };
 
 enum CmdLinePart {
@@ -24,7 +27,9 @@ struct Gallery {
 }
 
 impl Gallery {
-    fn new() -> Self { Self { sources: vec![] } }
+    fn new() -> Self {
+        Self { sources: vec![] }
+    }
 }
 
 struct ApplicationState {
@@ -73,14 +78,15 @@ impl ApplicationState {
         })
     }
 
-    pub fn register_folder(&mut self, gallery: String, folder: PathBuf)
-    {
-        // TODO: figure out how to get rid of this clone
-        let selected_gallery = self.galleries.entry(gallery.clone()).or_insert(Gallery::new());
-        selected_gallery.sources.push(folder);
+    pub fn register_folder(&mut self, gallery: &str, folder: &Path) {
+        let selected_gallery = self
+            .galleries
+            .entry(gallery.to_owned())
+            .or_insert(Gallery::new());
+        selected_gallery.sources.push(folder.to_path_buf());
 
         if self.current_gallery.is_none() {
-            self.current_gallery = Some(gallery);
+            self.current_gallery = Some(gallery.to_owned());
         }
     }
 
@@ -98,7 +104,7 @@ impl ApplicationState {
             Placeholder => {
                 let repl: &OsStr = replacement.as_ref();
                 repl
-            },
+            }
         }));
 
         cmd.spawn().unwrap().wait().await.unwrap();
@@ -109,14 +115,13 @@ impl ApplicationState {
 
         let mut rng = rand::thread_rng();
 
-        let all_files: Vec<PathBuf> = 
-            source_folders.iter()
+        let all_files: Vec<PathBuf> = source_folders
+            .iter()
             .filter_map(|dir| read_dir(dir).ok())
             .flatten()
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
             .collect();
-
 
         all_files.into_iter().choose(&mut rng)
     }
@@ -132,6 +137,38 @@ impl ApplicationState {
     }
 }
 
+#[derive(Deserialize)]
+struct GalleryConfig {
+    pub name: String,
+    pub folders: Vec<PathBuf>
+}
+
+#[derive(Deserialize)]
+struct Configuration {
+    pub command_line: String,
+    pub galleries: Vec<GalleryConfig>
+}
+
+fn read_configuration(
+    app: &mut ApplicationState,
+    config_file: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut cfg = std::fs::File::open(config_file)?;
+
+    let mut text = String::new();
+    cfg.read_to_string(&mut text)?;
+
+    let cfg: Configuration = toml::from_str(&text)?;
+
+    for GalleryConfig{name, folders} in cfg.galleries.iter() {
+        for folder in folders.iter() {
+            app.register_folder(&name, folder);
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() {
     let mut state = ApplicationState::new(
@@ -140,7 +177,12 @@ async fn main() {
     )
     .unwrap();
 
-    state.register_folder("test".to_owned(), ".".to_string().into());
+    read_configuration(&mut state, Path::new("test.toml")).unwrap();
+
+    state.register_folder(
+        "test",
+        Path::new("."),
+    );
 
     state.run().await;
 }
