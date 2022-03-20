@@ -11,7 +11,7 @@ use rand::prelude::*;
 
 use tokio::{
     process::Command,
-    time::{self, Duration, Interval},
+    time::{self, Duration, Interval}, select,
 };
 
 enum CmdLinePart {
@@ -20,12 +20,11 @@ enum CmdLinePart {
 }
 
 struct Gallery {
-    name: String,
     sources: Vec<PathBuf>,
 }
 
 impl Gallery {
-    fn new(name: String) -> Self { Self { name, sources: vec![] } }
+    fn new() -> Self { Self { sources: vec![] } }
 }
 
 struct ApplicationState {
@@ -77,7 +76,7 @@ impl ApplicationState {
     pub fn register_folder(&mut self, gallery: String, folder: PathBuf)
     {
         // TODO: figure out how to get rid of this clone
-        let selected_gallery = self.galleries.entry(gallery.clone()).or_insert(Gallery::new(gallery.clone()));
+        let selected_gallery = self.galleries.entry(gallery.clone()).or_insert(Gallery::new());
         selected_gallery.sources.push(folder);
 
         if self.current_gallery.is_none() {
@@ -121,18 +120,27 @@ impl ApplicationState {
 
         all_files.into_iter().choose(&mut rng)
     }
+
+    pub async fn run(&mut self) {
+        loop {
+            select! {
+                _ = self.update_interval.tick() => {
+                    self.update().await;
+                }
+            }
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() {
     let mut state = ApplicationState::new(
-        "echo hello {image}".split(' '),
-        time::interval(Duration::from_millis(500)),
+        "echo {image}".split(' '),
+        time::interval(Duration::from_millis(1000)),
     )
     .unwrap();
 
     state.register_folder("test".to_owned(), ".".to_string().into());
 
-    state.update().await;
-    state.update().await;
+    state.run().await;
 }
