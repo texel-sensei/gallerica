@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf}, io::Read,
 };
 
+use anyhow::{Result, anyhow, Context};
+
 use rand::prelude::*;
 use serde::Deserialize;
 
@@ -56,7 +58,7 @@ impl ApplicationState {
     pub fn new<'a, T, S>(
         update_command: T,
         update_interval: Interval,
-    ) -> Result<Self, Box<dyn std::error::Error>>
+    ) -> Result<Self>
     where
         T: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
@@ -65,7 +67,7 @@ impl ApplicationState {
 
         let cmd = cmdline
             .next()
-            .ok_or("Need a command".to_string())?
+            .ok_or(anyhow!("Need a command"))?
             .as_ref()
             .to_os_string();
 
@@ -152,13 +154,13 @@ struct Configuration {
 fn read_configuration(
     app: &mut ApplicationState,
     config_file: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<()> {
     let mut cfg = std::fs::File::open(config_file)?;
 
     let mut text = String::new();
-    cfg.read_to_string(&mut text)?;
+    cfg.read_to_string(&mut text).context("Failed to read configuration file")?;
 
-    let cfg: Configuration = toml::from_str(&text)?;
+    let cfg: Configuration = toml::from_str(&text).context("Failed to parse configuration")?;
 
     for GalleryConfig{name, folders} in cfg.galleries.iter() {
         for folder in folders.iter() {
@@ -170,19 +172,14 @@ fn read_configuration(
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let mut state = ApplicationState::new(
         "echo {image}".split(' '),
         time::interval(Duration::from_millis(1000)),
-    )
-    .unwrap();
+    )?;
 
-    read_configuration(&mut state, Path::new("test.toml")).unwrap();
-
-    state.register_folder(
-        "test",
-        Path::new("."),
-    );
+    read_configuration(&mut state, Path::new("test.toml"))?;
 
     state.run().await;
+    Ok(())
 }
