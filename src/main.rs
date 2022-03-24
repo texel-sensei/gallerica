@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf}, io::Read,
 };
 
-use anyhow::{Result, anyhow, Context};
+use anyhow::{Result, anyhow, Context, bail};
 
 use rand::prelude::*;
 use serde::Deserialize;
@@ -24,13 +24,16 @@ enum CmdLinePart {
     Placeholder,
 }
 
+#[derive(Deserialize, Debug)]
 struct Gallery {
+    name: String,
+    #[serde(rename = "folders")]
     sources: Vec<PathBuf>,
 }
 
 impl Gallery {
-    fn new() -> Self {
-        Self { sources: vec![] }
+    fn new(name: &str) -> Self {
+        Self { name: name.to_owned(), sources: vec![] }
     }
 }
 
@@ -80,16 +83,16 @@ impl ApplicationState {
         })
     }
 
-    pub fn register_folder(&mut self, gallery: &str, folder: &Path) {
-        let selected_gallery = self
-            .galleries
-            .entry(gallery.to_owned())
-            .or_insert(Gallery::new());
-        selected_gallery.sources.push(folder.to_path_buf());
+    pub fn add_gallery(&mut self, gallery: Gallery) {
+        self.galleries.insert(gallery.name.clone(), gallery);
+    }
 
-        if self.current_gallery.is_none() {
-            self.current_gallery = Some(gallery.to_owned());
+    pub fn change_gallery(&mut self, name: &str) -> Result<()> {
+        if !self.galleries.contains_key(name) {
+            bail!("Invalid gallery '{}'", name);
         }
+        self.current_gallery = Some(name.to_owned());
+        Ok(())
     }
 
     pub async fn update(&mut self) {
@@ -139,16 +142,11 @@ impl ApplicationState {
     }
 }
 
-#[derive(Deserialize)]
-struct GalleryConfig {
-    pub name: String,
-    pub folders: Vec<PathBuf>
-}
-
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Configuration {
     pub command_line: String,
-    pub galleries: Vec<GalleryConfig>
+    pub default_gallery: String,
+    pub galleries: Vec<Gallery>
 }
 
 fn read_configuration(
@@ -162,11 +160,12 @@ fn read_configuration(
 
     let cfg: Configuration = toml::from_str(&text).context("Failed to parse configuration")?;
 
-    for GalleryConfig{name, folders} in cfg.galleries.iter() {
-        for folder in folders.iter() {
-            app.register_folder(&name, folder);
-        }
+    for gallery in cfg.galleries.into_iter() {
+        app.add_gallery(gallery);
     }
+
+    app.change_gallery(&cfg.default_gallery)?;
+    dbg!(cfg.command_line);
 
     Ok(())
 }
