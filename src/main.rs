@@ -58,7 +58,7 @@ where
 }
 
 impl ApplicationState {
-    pub fn new<'a, T, S>(
+    pub fn new<T, S>(
         update_command: T,
         update_interval: Interval,
     ) -> Result<Self>
@@ -70,7 +70,7 @@ impl ApplicationState {
 
         let cmd = cmdline
             .next()
-            .ok_or(anyhow!("Need a command"))?
+            .ok_or_else(|| anyhow!("Need a command"))?
             .as_ref()
             .to_os_string();
 
@@ -120,15 +120,15 @@ impl ApplicationState {
 
         let mut rng = rand::thread_rng();
 
-        let all_files: Vec<PathBuf> = source_folders
+        let all_files = source_folders
             .iter()
             .filter_map(|dir| read_dir(dir).ok())
             .flatten()
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
-            .collect();
+            ;
 
-        all_files.into_iter().choose(&mut rng)
+        all_files.choose(&mut rng)
     }
 
     pub async fn run(&mut self) {
