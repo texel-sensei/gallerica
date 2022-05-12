@@ -5,11 +5,13 @@ use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
     fs::read_dir,
-    path::{Path, PathBuf}, io::Read,
+    io::Read,
+    path::{Path, PathBuf},
 };
 
-use anyhow::{Result, anyhow, Context, bail};
+use anyhow::{anyhow, bail, Context, Result};
 
+use message_api::Message;
 use rand::prelude::*;
 use serde::Deserialize;
 
@@ -18,6 +20,8 @@ use tokio::{
     select,
     time::{self, Duration, Interval},
 };
+
+mod message_api;
 
 enum CmdLinePart {
     Literal(OsString),
@@ -33,7 +37,10 @@ struct Gallery {
 
 impl Gallery {
     fn new(name: &str) -> Self {
-        Self { name: name.to_owned(), sources: vec![] }
+        Self {
+            name: name.to_owned(),
+            sources: vec![],
+        }
     }
 }
 
@@ -43,6 +50,8 @@ struct ApplicationState {
     update_interval: Interval,
     display_command: OsString,
     display_args: Vec<CmdLinePart>,
+
+    message_interface: Option<Box<dyn message_api::MessageReceiver>>,
 }
 
 fn parse_args<T, S>(args: T) -> impl Iterator<Item = CmdLinePart>
@@ -58,10 +67,7 @@ where
 }
 
 impl ApplicationState {
-    pub fn new<T, S>(
-        update_command: T,
-        update_interval: Interval,
-    ) -> Result<Self>
+    pub fn new<T, S>(update_command: T, update_interval: Interval) -> Result<Self>
     where
         T: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
@@ -80,6 +86,7 @@ impl ApplicationState {
             update_interval,
             display_command: cmd,
             display_args: parse_args(cmdline).collect(),
+            message_interface: None,
         })
     }
 
@@ -92,6 +99,11 @@ impl ApplicationState {
             bail!("Invalid gallery '{}'", name);
         }
         self.current_gallery = Some(name.to_owned());
+        Ok(())
+    }
+
+    pub async fn connect_listener(&mut self) -> anyhow::Result<()> {
+        self.message_interface = Some(Box::new(message_api::MQTTReceiver::new().await?));
         Ok(())
     }
 
@@ -125,19 +137,36 @@ impl ApplicationState {
             .filter_map(|dir| read_dir(dir).ok())
             .flatten()
             .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            ;
+            .map(|entry| entry.path());
 
         all_files.choose(&mut rng)
+    }
+
+    async fn handle_message(&mut self, msg: Message) {
+        match msg {
+            Message::NextImage => {
+                self.update().await;
+                self.update_interval.reset();
+            }
+            Message::UpdateInterval { millis } => {
+                self.update_interval = time::interval(Duration::from_millis(millis));
+            }
+        }
     }
 
     pub async fn run(&mut self) {
         loop {
             select! {
-                _ = self.update_interval.tick() => {
-                    self.update().await;
-                }
+                            _ = self.update_interval.tick() => {
+                                self.update().await;
+                            },
+                            message = self.message_interface.as_mut().unwrap().receive_message() => {
+                               match message {
+                                   Ok(message) => self.handle_message(message).await,
+                                   Err(err) => { eprintln!("Error while receiving messages!: {err}"); return; },
             }
+                            }
+                        }
         }
     }
 }
@@ -146,17 +175,15 @@ impl ApplicationState {
 struct Configuration {
     pub command_line: String,
     pub default_gallery: String,
-    pub galleries: Vec<Gallery>
+    pub galleries: Vec<Gallery>,
 }
 
-fn read_configuration(
-    app: &mut ApplicationState,
-    config_file: &Path,
-) -> Result<()> {
+fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<()> {
     let mut cfg = std::fs::File::open(config_file)?;
 
     let mut text = String::new();
-    cfg.read_to_string(&mut text).context("Failed to read configuration file")?;
+    cfg.read_to_string(&mut text)
+        .context("Failed to read configuration file")?;
 
     let cfg: Configuration = toml::from_str(&text).context("Failed to parse configuration")?;
 
@@ -178,6 +205,8 @@ async fn main() -> Result<()> {
     )?;
 
     read_configuration(&mut state, Path::new("test.toml"))?;
+
+    state.connect_listener().await?;
 
     state.run().await;
     Ok(())
