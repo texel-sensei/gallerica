@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use tokio::{
     process::Command,
-    select,
+    select, signal,
     time::{self, Duration, Interval},
 };
 
@@ -157,16 +157,19 @@ impl ApplicationState {
     pub async fn run(&mut self) {
         loop {
             select! {
-                            _ = self.update_interval.tick() => {
-                                self.update().await;
-                            },
-                            message = self.message_interface.as_mut().unwrap().receive_message() => {
-                               match message {
-                                   Ok(message) => self.handle_message(message).await,
-                                   Err(err) => { eprintln!("Error while receiving messages!: {err}"); return; },
+                _ = self.update_interval.tick() => {
+                    self.update().await;
+                },
+
+                message = self.message_interface.as_mut().unwrap().receive_message() => {
+                    match message {
+                        Ok(message) => self.handle_message(message).await,
+                        Err(err) => { eprintln!("Error while receiving messages!: {err}"); return; },
+                    }
+                },
+
+                _ = signal::ctrl_c() => break,
             }
-                            }
-                        }
         }
     }
 }
