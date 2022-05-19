@@ -1,7 +1,14 @@
+use std::{fs::remove_file, io, path::PathBuf};
+
+use anyhow::bail;
 use async_trait::async_trait;
 use serde::Deserialize;
 
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
+use tokio::{
+    io::AsyncWriteExt,
+    net::{UnixListener, UnixStream},
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "method")]
@@ -46,6 +53,44 @@ impl MessageReceiver for MQTTReceiver {
                     return Ok(serde_json::from_str(&text)?);
                 }
                 _ => {}
+            }
+        }
+    }
+}
+
+pub struct UnixSocketReceiver {
+    path: PathBuf,
+    listener: UnixListener,
+}
+
+impl UnixSocketReceiver {
+    pub async fn new() -> anyhow::Result<Self> {
+        let path = "pipe".into();
+        let listener = UnixListener::bind(&path)?;
+        Ok(Self { path, listener })
+    }
+}
+
+impl Drop for UnixSocketReceiver {
+    fn drop(&mut self) {
+        remove_file(&self.path).unwrap();
+    }
+}
+
+#[async_trait]
+impl MessageReceiver for UnixSocketReceiver {
+    async fn receive_message(&mut self) -> anyhow::Result<Message> {
+        let (stream, addr) = self.listener.accept().await?;
+
+        loop {
+            stream.readable().await?;
+            let mut buf = [0; 4096];
+            match stream.try_read(&mut buf) {
+                Ok(n) => {
+                    return Ok(serde_json::from_slice(&buf[0..n])?);
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) => bail!(e),
             }
         }
     }

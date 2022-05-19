@@ -103,7 +103,8 @@ impl ApplicationState {
     }
 
     pub async fn connect_listener(&mut self) -> anyhow::Result<()> {
-        self.message_interface = Some(Box::new(message_api::MQTTReceiver::new().await?));
+        //self.message_interface = Some(Box::new(message_api::MQTTReceiver::new().await?));
+        self.message_interface = Some(Box::new(message_api::UnixSocketReceiver::new().await?));
         Ok(())
     }
 
