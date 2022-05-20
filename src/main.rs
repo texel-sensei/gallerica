@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use clap::Parser;
 use rand::prelude::*;
 use serde::Deserialize;
 
@@ -26,6 +27,14 @@ use tokio::{
 pub mod message_api;
 pub use gallerica::project_dirs;
 pub use message_api::Message;
+
+#[derive(Parser)]
+struct Cli {
+    /// Config file to use. If this argument is not given, then it will read
+    /// $XDG_DATA_HOME/gallerica/config.toml (or equivalent) by default
+    #[clap(short)]
+    config_file: Option<PathBuf>,
+}
 
 enum CmdLinePart {
     Literal(OsString),
@@ -262,10 +271,15 @@ async fn main() -> Result<()> {
         time::interval(Duration::from_millis(10000)),
     )?;
 
-    read_configuration(
-        &mut state,
-        &gallerica::project_dirs().config_dir().join("config.toml"),
-    )?;
+    let cli = Cli::parse();
+
+    let config_path = if let Some(ref path) = cli.config_file {
+        path.clone()
+    } else {
+        gallerica::project_dirs().config_dir().join("config.toml")
+    };
+
+    read_configuration(&mut state, &config_path)?;
 
     state.connect_listener().await?;
 
