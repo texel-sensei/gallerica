@@ -143,6 +143,16 @@ impl ApplicationState {
             Message::UpdateInterval { millis } => {
                 self.update_interval = time::interval(Duration::from_millis(millis));
             }
+            Message::SelectGallery { name, refresh } => {
+                if let Err(err) = self.change_gallery(&name) {
+                   eprintln!("Failed to change gallery to '{name}': {err}"); 
+                   return;
+                }
+
+                if refresh {
+                    self.update().await;
+                }
+            }
         }
     }
 
