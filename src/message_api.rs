@@ -6,10 +6,7 @@ use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
-use tokio::{
-    io::AsyncWriteExt,
-    net::{UnixListener, UnixStream},
-};
+use tokio::net::UnixListener;
 
 #[derive(Debug, Serialize, Deserialize, Subcommand)]
 #[serde(tag = "method")]
@@ -27,7 +24,6 @@ pub trait MessageReceiver {
 }
 
 pub struct MQTTReceiver {
-    client: AsyncClient,
     connection: EventLoop,
 }
 
@@ -38,7 +34,7 @@ impl MQTTReceiver {
 
         client.subscribe("#", QoS::AtLeastOnce).await?;
 
-        Ok(MQTTReceiver { client, connection })
+        Ok(MQTTReceiver {connection })
     }
 }
 
@@ -81,7 +77,7 @@ impl Drop for UnixSocketReceiver {
 #[async_trait]
 impl MessageReceiver for UnixSocketReceiver {
     async fn receive_message(&mut self) -> anyhow::Result<Message> {
-        let (stream, addr) = self.listener.accept().await?;
+        let (stream, _addr) = self.listener.accept().await?;
 
         loop {
             stream.readable().await?;

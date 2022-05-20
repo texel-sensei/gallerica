@@ -35,15 +35,6 @@ struct Gallery {
     sources: Vec<PathBuf>,
 }
 
-impl Gallery {
-    fn new(name: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            sources: vec![],
-        }
-    }
-}
-
 struct ApplicationState {
     galleries: HashMap<String, Gallery>,
     current_gallery: Option<String>,
