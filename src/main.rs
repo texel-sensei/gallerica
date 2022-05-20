@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 
-use message_api::Message;
+pub use message_api::Message;
 use rand::prelude::*;
 use serde::Deserialize;
 
@@ -21,7 +21,7 @@ use tokio::{
     time::{self, Duration, Interval},
 };
 
-mod message_api;
+pub mod message_api;
 
 enum CmdLinePart {
     Literal(OsString),

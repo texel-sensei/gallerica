@@ -2,7 +2,8 @@ use std::{fs::remove_file, io, path::PathBuf};
 
 use anyhow::bail;
 use async_trait::async_trait;
-use serde::Deserialize;
+use clap::Subcommand;
+use serde::{Deserialize, Serialize};
 
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
 use tokio::{
@@ -10,7 +11,7 @@ use tokio::{
     net::{UnixListener, UnixStream},
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Subcommand)]
 #[serde(tag = "method")]
 pub enum Message {
     /// Immediately show the next image, no matter the update rate.
