@@ -18,7 +18,7 @@ use serde::Deserialize;
 use tokio::{
     process::Command,
     select, signal,
-    time::{self, Duration, Interval},
+    time::{self, Duration, Interval}, pin,
 };
 
 pub mod message_api;
@@ -157,6 +157,9 @@ impl ApplicationState {
     }
 
     pub async fn run(&mut self) {
+        pin!{
+            let shutdown_task = tokio::spawn(shutdown_signal_received());
+        }
         loop {
             select! {
                 _ = self.update_interval.tick() => {
@@ -170,7 +173,7 @@ impl ApplicationState {
                     }
                 },
 
-                _ = signal::ctrl_c() => break,
+                _ = &mut shutdown_task => break,
             }
         }
     }
@@ -200,6 +203,16 @@ fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<
     dbg!(cfg.command_line);
 
     Ok(())
+}
+
+/// Block until the process received a shutdown signal, e.g. CTRL-C.
+async fn shutdown_signal_received() {
+    use signal::unix::{self, SignalKind};
+    let mut sigterm = unix::signal(SignalKind::terminate()).expect("Failed to install sigterm handler");
+    select! {
+       _ = signal::ctrl_c() => {} 
+       _ = sigterm.recv() => {}
+    }
 }
 
 #[tokio::main]
