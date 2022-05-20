@@ -57,7 +57,14 @@ struct ApplicationState {
 
     message_interface: Option<Box<dyn message_api::MessageReceiver>>,
 
+    /// Task which runs the update subprocess
     update_task: Option<JoinHandle<io::Result<ExitStatus>>>,
+
+    /// In case a new update is requested, while an existing one is still running, this will buffer
+    /// the next update, in order to execute it once the first one finishes.
+    /// Only one update is buffered, if a third update arrives, while the first is still running,
+    /// the second one is discarded in favor for the third.
+    pending_update: Option<Command>,
 }
 
 fn parse_args<T, S>(args: T) -> impl Iterator<Item = CmdLinePart>
@@ -94,6 +101,7 @@ impl ApplicationState {
             display_args: parse_args(cmdline).collect(),
             message_interface: None,
             update_task: None,
+            pending_update: None,
         })
     }
 
@@ -134,7 +142,10 @@ impl ApplicationState {
 
         match self.update_task {
             Some(_) => {
-                eprintln!("Update already running, skipping...");
+                if self.pending_update.is_some() {
+                    eprintln!("Discarding pending update");
+                }
+                self.pending_update = Some(cmd);
             }
             None => {
                 self.update_task = Some(tokio::spawn(
@@ -193,7 +204,11 @@ impl ApplicationState {
 
                 // If an update finished, then reset the update task back to none
                 _ = async {self.update_task.as_mut().unwrap().await}, if self.update_task.is_some() => {
-                    self.update_task = None;
+                    self.update_task = self.pending_update.take().map(|mut cmd| {
+                        tokio::spawn(
+                            async move { cmd.spawn().unwrap().wait().await },
+                        )
+                    });
                 },
 
                 message = self.message_interface.as_mut().unwrap().receive_message() => {
