@@ -5,8 +5,9 @@ use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
     fs::read_dir,
-    io::Read,
+    io::{self, Read},
     path::{Path, PathBuf},
+    process::ExitStatus,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -18,6 +19,7 @@ use tokio::{
     pin,
     process::Command,
     select, signal,
+    task::JoinHandle,
     time::{self, Duration, Interval},
 };
 
@@ -45,6 +47,8 @@ struct ApplicationState {
     display_args: Vec<CmdLinePart>,
 
     message_interface: Option<Box<dyn message_api::MessageReceiver>>,
+
+    update_task: Option<JoinHandle<io::Result<ExitStatus>>>,
 }
 
 fn parse_args<T, S>(args: T) -> impl Iterator<Item = CmdLinePart>
@@ -80,6 +84,7 @@ impl ApplicationState {
             display_command: cmd,
             display_args: parse_args(cmdline).collect(),
             message_interface: None,
+            update_task: None,
         })
     }
 
@@ -118,7 +123,16 @@ impl ApplicationState {
             }
         }));
 
-        cmd.spawn().unwrap().wait().await.unwrap();
+        match self.update_task {
+            Some(_) => {
+                eprintln!("Update already running, skipping...");
+            }
+            None => {
+                self.update_task = Some(tokio::spawn(
+                    async move { cmd.spawn().unwrap().wait().await },
+                ));
+            }
+        }
     }
 
     fn select_random_image(&self) -> Option<PathBuf> {
@@ -166,6 +180,11 @@ impl ApplicationState {
             select! {
                 _ = self.update_interval.tick() => {
                     self.update().await;
+                },
+
+                // If an update finished, then reset the update task back to none
+                _ = async {self.update_task.as_mut().unwrap().await}, if self.update_task.is_some() => {
+                    self.update_task = None;
                 },
 
                 message = self.message_interface.as_mut().unwrap().receive_message() => {
