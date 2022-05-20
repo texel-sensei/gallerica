@@ -11,24 +11,26 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 
-pub use message_api::Message;
 use rand::prelude::*;
 use serde::Deserialize;
 
 use tokio::{
+    pin,
     process::Command,
     select, signal,
-    time::{self, Duration, Interval}, pin,
+    time::{self, Duration, Interval},
 };
 
 pub mod message_api;
+pub use gallerica::project_dirs;
+pub use message_api::Message;
 
 enum CmdLinePart {
     Literal(OsString),
     Placeholder,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct Gallery {
     name: String,
     #[serde(rename = "folders")]
@@ -145,8 +147,8 @@ impl ApplicationState {
             }
             Message::SelectGallery { name, refresh } => {
                 if let Err(err) = self.change_gallery(&name) {
-                   eprintln!("Failed to change gallery to '{name}': {err}"); 
-                   return;
+                    eprintln!("Failed to change gallery to '{name}': {err}");
+                    return;
                 }
 
                 if refresh {
@@ -157,7 +159,7 @@ impl ApplicationState {
     }
 
     pub async fn run(&mut self) {
-        pin!{
+        pin! {
             let shutdown_task = tokio::spawn(shutdown_signal_received());
         }
         loop {
@@ -177,30 +179,48 @@ impl ApplicationState {
             }
         }
     }
+
+    pub fn update_configuration(&mut self, config: &Configuration) -> Result<()> {
+        for gallery in config.galleries.iter().cloned() {
+            self.add_gallery(gallery);
+        }
+
+        self.change_gallery(&config.default_gallery)?;
+
+        let mut cmdline = config.command_line.split(' ');
+
+        let cmd = AsRef::<OsStr>::as_ref(&cmdline.next().ok_or_else(|| anyhow!("Need a command"))?)
+            .to_os_string();
+
+        self.display_command = cmd;
+        self.display_args = parse_args(cmdline).collect();
+
+        self.update_interval = time::interval(Duration::from_millis(config.update_interval_ms));
+
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Debug)]
 struct Configuration {
     pub command_line: String,
+    pub update_interval_ms: u64,
     pub default_gallery: String,
     pub galleries: Vec<Gallery>,
 }
 
 fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<()> {
-    let mut cfg = std::fs::File::open(config_file)?;
+    let make_ctx = || anyhow!("Failed to open config file '{}'", config_file.display());
+
+    let mut cfg = std::fs::File::open(config_file).context(make_ctx())?;
 
     let mut text = String::new();
-    cfg.read_to_string(&mut text)
-        .context("Failed to read configuration file")?;
+    cfg.read_to_string(&mut text).context(make_ctx())?;
 
     let cfg: Configuration = toml::from_str(&text).context("Failed to parse configuration")?;
 
-    for gallery in cfg.galleries.into_iter() {
-        app.add_gallery(gallery);
-    }
-
-    app.change_gallery(&cfg.default_gallery)?;
-    dbg!(cfg.command_line);
+    app.update_configuration(&cfg)
+        .context("Failed to apply configuration")?;
 
     Ok(())
 }
@@ -208,9 +228,10 @@ fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<
 /// Block until the process received a shutdown signal, e.g. CTRL-C.
 async fn shutdown_signal_received() {
     use signal::unix::{self, SignalKind};
-    let mut sigterm = unix::signal(SignalKind::terminate()).expect("Failed to install sigterm handler");
+    let mut sigterm =
+        unix::signal(SignalKind::terminate()).expect("Failed to install sigterm handler");
     select! {
-       _ = signal::ctrl_c() => {} 
+       _ = signal::ctrl_c() => {}
        _ = sigterm.recv() => {}
     }
 }
@@ -219,10 +240,13 @@ async fn shutdown_signal_received() {
 async fn main() -> Result<()> {
     let mut state = ApplicationState::new(
         "echo {image}".split(' '),
-        time::interval(Duration::from_millis(1000)),
+        time::interval(Duration::from_millis(10000)),
     )?;
 
-    read_configuration(&mut state, Path::new("test.toml"))?;
+    read_configuration(
+        &mut state,
+        &gallerica::project_dirs().config_dir().join("config.toml"),
+    )?;
 
     state.connect_listener().await?;
 

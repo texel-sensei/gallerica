@@ -1,25 +1,33 @@
-use std::os::unix::net::UnixStream;
+use std::{fs::create_dir_all, os::unix::net::UnixStream, path::Path};
 
+use anyhow::Context;
 use clap::Parser;
 
-use gallerica::Message;
+use gallerica::{project_dirs, Message};
 
 #[derive(Parser)]
 #[clap(author, version)]
-#[clap(about="Control a running gallerica daemon")]
+#[clap(about = "Control a running gallerica daemon")]
 struct Cli {
     #[clap(subcommand)]
-    command: Option<Message>
+    command: Message,
 }
-
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    if let Some(cmd) = cli.command {
-        let stream = UnixStream::connect("pipe")?;
-        serde_json::to_writer(&stream, &cmd)?;
-    }
+    let dirs = project_dirs();
+    let path = dirs.runtime_dir().unwrap_or_else(|| Path::new("/tmp"));
+    let file = path.join("gallerica.sock");
+
+    let stream = (|| {
+        create_dir_all(path)?;
+
+        UnixStream::connect(file.clone())
+    })()
+    .with_context(|| format!("Failed to connect to Unix socket at '{}'", file.display()))?;
+
+    serde_json::to_writer(&stream, &cli.command)?;
 
     Ok(())
 }

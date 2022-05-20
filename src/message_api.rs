@@ -1,12 +1,18 @@
-use std::{fs::remove_file, io, path::PathBuf};
+use std::{
+    fs::{create_dir_all, remove_file},
+    io,
+    path::{Path, PathBuf},
+};
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use async_trait::async_trait;
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
 use tokio::net::UnixListener;
+
+use crate::project_dirs;
 
 #[derive(Debug, Serialize, Deserialize, Subcommand)]
 #[serde(tag = "method")]
@@ -21,12 +27,12 @@ pub enum Message {
     },
 
     /// Choose a new gallery from which images are selected
-    SelectGallery { 
+    SelectGallery {
         /// Name of the new gallery to use
         name: String,
 
         /// Whether to immediately refresh the display or wait till the next scheduled update
-        #[clap(long, parse(try_from_str), default_value="true")]
+        #[clap(long, parse(try_from_str), default_value = "true")]
         refresh: bool,
     },
 }
@@ -47,7 +53,7 @@ impl MQTTReceiver {
 
         client.subscribe("#", QoS::AtLeastOnce).await?;
 
-        Ok(MQTTReceiver {connection })
+        Ok(MQTTReceiver { connection })
     }
 }
 
@@ -75,9 +81,22 @@ pub struct UnixSocketReceiver {
 
 impl UnixSocketReceiver {
     pub async fn new() -> anyhow::Result<Self> {
-        let path = "pipe".into();
-        let listener = UnixListener::bind(&path)?;
-        Ok(Self { path, listener })
+        let dirs = project_dirs();
+        let path = dirs.runtime_dir().unwrap_or_else(|| Path::new("/tmp"));
+        let file = path.join("gallerica.sock");
+
+        use anyhow::Ok;
+        (|| {
+            create_dir_all(path)?;
+
+            let listener = UnixListener::bind(&file)?;
+
+            Ok(Self {
+                path: file.clone(),
+                listener,
+            })
+        })()
+        .with_context(|| format!("Failed to create Unix socket at '{}'", file.display()))
     }
 }
 
