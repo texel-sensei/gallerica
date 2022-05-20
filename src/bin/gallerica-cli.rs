@@ -5,6 +5,8 @@ use clap::Parser;
 use gallerica::Message;
 
 #[derive(Parser)]
+#[clap(author, version)]
+#[clap(about="Control a running gallerica daemon")]
 struct Cli {
     #[clap(subcommand)]
     command: Option<Message>
