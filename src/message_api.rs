@@ -1,16 +1,15 @@
 use std::{
     fs::{create_dir_all, remove_file},
-    io,
     path::{Path, PathBuf},
 };
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use async_trait::async_trait;
 use clap::Subcommand;
 use serde::{Deserialize, Serialize};
 
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
-use tokio::net::UnixListener;
+use tokio::{io::AsyncReadExt, net::UnixListener};
 
 use crate::project_dirs;
 
@@ -109,18 +108,11 @@ impl Drop for UnixSocketReceiver {
 #[async_trait]
 impl MessageReceiver for UnixSocketReceiver {
     async fn receive_message(&mut self) -> anyhow::Result<Message> {
-        let (stream, _addr) = self.listener.accept().await?;
+        let (mut stream, _addr) = self.listener.accept().await?;
 
-        loop {
-            stream.readable().await?;
-            let mut buf = [0; 4096];
-            match stream.try_read(&mut buf) {
-                Ok(n) => {
-                    return Ok(serde_json::from_slice(&buf[0..n])?);
-                }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
-                Err(e) => bail!(e),
-            }
-        }
+        stream.readable().await?;
+        let mut buf = vec![];
+        stream.read_to_end(&mut buf).await?;
+        Ok(serde_json::from_slice(&buf)?)
     }
 }
