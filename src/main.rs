@@ -6,13 +6,14 @@ use std::{
     ffi::{OsStr, OsString},
     fs::read_dir,
     io::{self, Read},
-    path::{Path, PathBuf},
-    process::ExitStatus,
+    path::{Path, PathBuf, Component},
+    process::ExitStatus, borrow::Cow,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 
 use clap::Parser;
+use directories::UserDirs;
 use rand::prelude::*;
 use serde::Deserialize;
 
@@ -224,7 +225,12 @@ impl ApplicationState {
     }
 
     pub fn update_configuration(&mut self, config: &Configuration) -> Result<()> {
-        for gallery in config.galleries.iter().cloned() {
+        for mut gallery in config.galleries.iter().cloned() {
+            for folder in gallery.sources.iter_mut() {
+                if let Cow::Owned(path) = expand_tilde(&folder)? {
+                    *folder = path;
+                }
+            }
             self.add_gallery(gallery);
         }
 
@@ -277,6 +283,26 @@ async fn shutdown_signal_received() {
        _ = signal::ctrl_c() => {}
        _ = sigterm.recv() => {}
     }
+}
+
+/// Given a path, expand a leading `~` to the user home directory, if any.
+/// Returns Err if the user does not have a home.
+fn expand_tilde(path: &Path) -> Result<Cow<Path>> {
+    let mut components = path.components();
+
+    if let Some(Component::Normal(start)) = components.next() {
+        if let Some("~") = start.to_str() {
+
+            return Ok(Cow::Owned(
+                UserDirs::new()
+                .ok_or_else(||anyhow!("User has no home directory!"))?
+                .home_dir()
+                .join(components)
+            ));
+    }
+    }
+
+    Ok(Cow::Borrowed(path))
 }
 
 #[tokio::main]
