@@ -3,6 +3,9 @@ name = "gallerica"
 version = "0.1.0"
 edition = "2021"
 authors = ["texel <texelsensei@posteo.net>"]
+description = "Tool for selecting random images out of a list of folders."
+readme = "README.md"
+license = "Unlicense"
 
 default-run = "gallerica"
 
