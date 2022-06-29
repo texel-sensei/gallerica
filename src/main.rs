@@ -2,12 +2,13 @@
 //! And supporting an MQTT API to be configured on the fly.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     ffi::{OsStr, OsString},
     fs::read_dir,
     io::{self, Read},
-    path::{Path, PathBuf, Component},
-    process::ExitStatus, borrow::Cow,
+    path::{Component, Path, PathBuf},
+    process::ExitStatus,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -292,14 +293,13 @@ fn expand_tilde(path: &Path) -> Result<Cow<Path>> {
 
     if let Some(Component::Normal(start)) = components.next() {
         if let Some("~") = start.to_str() {
-
             return Ok(Cow::Owned(
                 UserDirs::new()
-                .ok_or_else(||anyhow!("User has no home directory!"))?
-                .home_dir()
-                .join(components)
+                    .ok_or_else(|| anyhow!("User has no home directory!"))?
+                    .home_dir()
+                    .join(components),
             ));
-    }
+        }
     }
 
     Ok(Cow::Borrowed(path))
