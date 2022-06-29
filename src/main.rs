@@ -228,7 +228,7 @@ impl ApplicationState {
     pub fn update_configuration(&mut self, config: &Configuration) -> Result<()> {
         for mut gallery in config.galleries.iter().cloned() {
             for folder in gallery.sources.iter_mut() {
-                if let Cow::Owned(path) = expand_tilde(&folder)? {
+                if let Cow::Owned(path) = expand_tilde(folder)? {
                     *folder = path;
                 }
             }

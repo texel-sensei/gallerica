@@ -62,12 +62,9 @@ impl MessageReceiver for MQTTReceiver {
         use rumqttc::{Event::Incoming, Packet::Publish};
 
         loop {
-            match self.connection.poll().await? {
-                Incoming(Publish(publish)) => {
-                    let text = String::from_utf8_lossy(&publish.payload);
-                    return Ok(serde_json::from_str(&text)?);
-                }
-                _ => {}
+            if let Incoming(Publish(publish)) = self.connection.poll().await? {
+                let text = String::from_utf8_lossy(&publish.payload);
+                return Ok(serde_json::from_str(&text)?);
             }
         }
     }
