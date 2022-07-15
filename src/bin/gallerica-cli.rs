@@ -3,14 +3,14 @@ use std::{fs::create_dir_all, os::unix::net::UnixStream, path::Path};
 use anyhow::Context;
 use clap::Parser;
 
-use gallerica::{project_dirs, Message};
+use gallerica::{project_dirs, Request};
 
 #[derive(Parser)]
 #[clap(author, version)]
 #[clap(about = "Control a running gallerica daemon")]
 struct Cli {
     #[clap(subcommand)]
-    command: Message,
+    command: Request,
 }
 
 fn main() -> anyhow::Result<()> {

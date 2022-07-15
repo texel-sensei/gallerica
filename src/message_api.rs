@@ -15,7 +15,7 @@ use crate::project_dirs;
 
 #[derive(Debug, Serialize, Deserialize, Subcommand)]
 #[serde(tag = "method")]
-pub enum Message {
+pub enum Request {
     /// Immediately show the next image, no matter the update rate.
     NextImage,
 
@@ -38,7 +38,7 @@ pub enum Message {
 
 #[async_trait]
 pub trait MessageReceiver {
-    async fn receive_message(&mut self) -> anyhow::Result<Message>;
+    async fn receive_message(&mut self) -> anyhow::Result<Request>;
 }
 
 pub struct MQTTReceiver {
@@ -58,7 +58,7 @@ impl MQTTReceiver {
 
 #[async_trait]
 impl MessageReceiver for MQTTReceiver {
-    async fn receive_message(&mut self) -> anyhow::Result<Message> {
+    async fn receive_message(&mut self) -> anyhow::Result<Request> {
         use rumqttc::{Event::Incoming, Packet::Publish};
 
         loop {
@@ -104,7 +104,7 @@ impl Drop for UnixSocketReceiver {
 
 #[async_trait]
 impl MessageReceiver for UnixSocketReceiver {
-    async fn receive_message(&mut self) -> anyhow::Result<Message> {
+    async fn receive_message(&mut self) -> anyhow::Result<Request> {
         let (mut stream, _addr) = self.listener.accept().await?;
 
         stream.readable().await?;

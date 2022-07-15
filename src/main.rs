@@ -28,7 +28,7 @@ use tokio::{
 
 pub mod message_api;
 pub use gallerica::project_dirs;
-pub use message_api::Message;
+pub use message_api::Request;
 
 #[derive(Parser)]
 struct Cli {
@@ -172,16 +172,16 @@ impl ApplicationState {
         all_files.choose(&mut rng)
     }
 
-    async fn handle_message(&mut self, msg: Message) {
+    async fn handle_message(&mut self, msg: Request) {
         match msg {
-            Message::NextImage => {
+            Request::NextImage => {
                 self.update().await;
                 self.update_interval.reset();
             }
-            Message::UpdateInterval { millis } => {
+            Request::UpdateInterval { millis } => {
                 self.update_interval = time::interval(Duration::from_millis(millis));
             }
-            Message::SelectGallery { name, refresh } => {
+            Request::SelectGallery { name, refresh } => {
                 if let Err(err) = self.change_gallery(&name) {
                     eprintln!("Failed to change gallery to '{name}': {err}");
                     return;
