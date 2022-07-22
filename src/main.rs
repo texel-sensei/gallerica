@@ -30,6 +30,9 @@ pub mod message_api;
 pub use gallerica::project_dirs;
 pub use message_api::Request;
 
+mod unix_socket_listener;
+use unix_socket_listener::UnixSocketReceiver;
+
 #[derive(Parser)]
 struct Cli {
     /// Config file to use. If this argument is not given, then it will read
@@ -121,7 +124,7 @@ impl ApplicationState {
 
     pub async fn connect_listener(&mut self) -> anyhow::Result<()> {
         //self.message_interface = Some(Box::new(message_api::MQTTReceiver::new().await?));
-        self.message_interface = Some(Box::new(message_api::UnixSocketReceiver::new().await?));
+        self.message_interface = Some(Box::new(UnixSocketReceiver::new().await?));
         Ok(())
     }
 
