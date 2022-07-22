@@ -25,7 +25,20 @@ pub enum Request {
     },
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum Response {
+    NewImage,
+    InvalidGallery,
+}
+
+#[async_trait]
+pub trait InflightRequest {
+    fn request(&self) -> &Request;
+    async fn respond(self: Box<Self>, response: Response) -> anyhow::Result<()>;
+}
+
 #[async_trait]
 pub trait MessageReceiver {
-    async fn receive_message(&mut self) -> anyhow::Result<Request>;
+    async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest>>;
 }

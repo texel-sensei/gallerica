@@ -26,12 +26,16 @@ use tokio::{
     time::{self, Duration, Interval},
 };
 
-pub mod message_api;
+mod message_api;
 pub use gallerica::project_dirs;
-pub use message_api::Request;
+use message_api::InflightRequest;
+pub use message_api::{Request, Response};
 
 mod unix_socket_listener;
 use unix_socket_listener::UnixSocketReceiver;
+
+//mod mqtt_listener;
+//use mqtt_listener::MQTTReceiver;
 
 #[derive(Parser)]
 struct Cli {
@@ -123,7 +127,7 @@ impl ApplicationState {
     }
 
     pub async fn connect_listener(&mut self) -> anyhow::Result<()> {
-        //self.message_interface = Some(Box::new(message_api::MQTTReceiver::new().await?));
+        //self.message_interface = Some(Box::new(MQTTReceiver::new().await?));
         self.message_interface = Some(Box::new(UnixSocketReceiver::new().await?));
         Ok(())
     }
@@ -175,25 +179,35 @@ impl ApplicationState {
         all_files.choose(&mut rng)
     }
 
-    async fn handle_message(&mut self, msg: Request) {
-        match msg {
+    async fn handle_message(&mut self, msg: Box<dyn InflightRequest>) {
+        let response = match msg.request() {
             Request::NextImage => {
                 self.update().await;
                 self.update_interval.reset();
+                Response::NewImage
             }
             Request::UpdateInterval { millis } => {
-                self.update_interval = time::interval(Duration::from_millis(millis));
+                self.update_interval = time::interval(Duration::from_millis(*millis));
+                Response::NewImage
             }
             Request::SelectGallery { name, refresh } => {
                 if let Err(err) = self.change_gallery(&name) {
                     eprintln!("Failed to change gallery to '{name}': {err}");
-                    return;
-                }
+                    Response::InvalidGallery
+                } else {
+                    if *refresh {
+                        self.update().await;
+                    }
 
-                if refresh {
-                    self.update().await;
+                    Response::NewImage
                 }
             }
+        };
+
+        let result = msg.respond(response).await;
+
+        if let Err(err) = result {
+            eprintln!("Error responding to request: {err}");
         }
     }
 
