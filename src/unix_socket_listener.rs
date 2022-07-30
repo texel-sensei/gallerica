@@ -69,7 +69,7 @@ impl Drop for UnixSocketReceiver {
 
 #[async_trait]
 impl MessageReceiver for UnixSocketReceiver {
-    async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest>> {
+    async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest + Send>> {
         let (mut stream, _addr) = self.listener.accept().await?;
 
         stream.readable().await?;

@@ -22,20 +22,21 @@ use tokio::{
     pin,
     process::Command,
     select, signal,
+    sync::mpsc::{self, Receiver, Sender},
     task::JoinHandle,
     time::{self, Duration, Interval},
 };
 
 mod message_api;
 pub use gallerica::project_dirs;
-use message_api::InflightRequest;
+use message_api::{InflightRequest, MessageReceiver, MessageSource};
 pub use message_api::{Request, Response};
 
 mod unix_socket_listener;
 use unix_socket_listener::UnixSocketReceiver;
 
-//mod mqtt_listener;
-//use mqtt_listener::MQTTReceiver;
+mod mqtt_listener;
+use mqtt_listener::MQTTReceiver;
 
 #[derive(Parser)]
 struct Cli {
@@ -64,7 +65,9 @@ struct ApplicationState {
     display_command: OsString,
     display_args: Vec<CmdLinePart>,
 
-    message_interface: Option<Box<dyn message_api::MessageReceiver>>,
+    message_sources: Vec<MessageSource>,
+    message_queue: Receiver<anyhow::Result<Box<dyn InflightRequest + Send>>>,
+    message_input: Sender<anyhow::Result<Box<dyn InflightRequest + Send>>>,
 
     /// Task which runs the update subprocess
     update_task: Option<JoinHandle<io::Result<ExitStatus>>>,
@@ -102,13 +105,18 @@ impl ApplicationState {
             .as_ref()
             .to_os_string();
 
+        // arbitrary message limit
+        let (sender, receiver) = mpsc::channel(42);
+
         Ok(ApplicationState {
             galleries: HashMap::new(),
             current_gallery: None,
             update_interval,
             display_command: cmd,
             display_args: parse_args(cmdline).collect(),
-            message_interface: None,
+            message_sources: Vec::new(),
+            message_queue: receiver,
+            message_input: sender,
             update_task: None,
             pending_update: None,
         })
@@ -127,9 +135,38 @@ impl ApplicationState {
     }
 
     pub async fn connect_listener(&mut self) -> anyhow::Result<()> {
-        //self.message_interface = Some(Box::new(MQTTReceiver::new().await?));
-        self.message_interface = Some(Box::new(UnixSocketReceiver::new().await?));
-        Ok(())
+        fn type_erase<R>(r: Result<R>) -> Result<Box<dyn MessageReceiver + Send>>
+        where
+            R: MessageReceiver + Send + 'static,
+        {
+            match r {
+                Ok(o) => Ok(Box::new(o)),
+                Err(e) => Err(e),
+            }
+        }
+
+        let receivers: Vec<Result<Box<dyn MessageReceiver + Send>>> = vec![
+            type_erase(MQTTReceiver::new().await),
+            type_erase(UnixSocketReceiver::new().await),
+        ];
+
+        let mut any_ok = false;
+        for r in receivers.into_iter() {
+            match r {
+                Ok(listener) => {
+                    any_ok = true;
+                    self.message_sources
+                        .push(MessageSource::new(listener, self.message_input.clone()));
+                }
+                Err(err) => eprintln!("Failed to create message listener: {err}"),
+            }
+        }
+
+        if any_ok {
+            Ok(())
+        } else {
+            bail!("Failed to create any message listeners!")
+        }
     }
 
     pub async fn update(&mut self) {
@@ -235,7 +272,7 @@ impl ApplicationState {
                     });
                 },
 
-                message = self.message_interface.as_mut().unwrap().receive_message() => {
+                Some(message) = self.message_queue.recv() => {
                     match message {
                         Ok(message) => self.handle_message(message).await,
                         Err(err) => { eprintln!("Error while receiving messages!: {err}"); return; },
