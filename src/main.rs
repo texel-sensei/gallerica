@@ -180,18 +180,20 @@ impl ApplicationState {
     }
 
     async fn handle_message(&mut self, msg: Box<dyn InflightRequest>) {
+        use Request::*;
+
         let response = match msg.request() {
-            Request::NextImage => {
+            Ok(NextImage) => {
                 self.update().await;
                 self.update_interval.reset();
                 Response::NewImage
             }
-            Request::UpdateInterval { millis } => {
+            Ok(UpdateInterval { millis }) => {
                 self.update_interval = time::interval(Duration::from_millis(*millis));
                 Response::NewImage
             }
-            Request::SelectGallery { name, refresh } => {
-                if let Err(err) = self.change_gallery(&name) {
+            Ok(SelectGallery { name, refresh }) => {
+                if let Err(err) = self.change_gallery(name) {
                     eprintln!("Failed to change gallery to '{name}': {err}");
                     Response::InvalidGallery
                 } else {
@@ -202,6 +204,9 @@ impl ApplicationState {
                     Response::NewImage
                 }
             }
+            Err(err) => Response::BadRequest {
+                message: err.to_string(),
+            },
         };
 
         let result = msg.respond(response).await;

@@ -13,14 +13,16 @@ use tokio::{
 };
 
 struct UnixRequest {
-    pub request: Request,
+    pub request: anyhow::Result<Request>,
     pub stream: UnixStream,
 }
 
 #[async_trait]
 impl InflightRequest for UnixRequest {
-    fn request(&self) -> &Request {
-        &self.request
+    fn request(&self) -> anyhow::Result<&Request> {
+        self.request
+            .as_ref()
+            .map_err(|e| anyhow::format_err!(e.to_string()))
     }
 
     async fn respond(mut self: Box<Self>, response: Response) -> anyhow::Result<()> {
@@ -74,7 +76,7 @@ impl MessageReceiver for UnixSocketReceiver {
         let mut buf = vec![];
         stream.read_to_end(&mut buf).await?;
         Ok(Box::new(UnixRequest {
-            request: serde_json::from_slice(&buf)?,
+            request: serde_json::from_slice(&buf).map_err(|e| e.into()),
             stream,
         }))
     }

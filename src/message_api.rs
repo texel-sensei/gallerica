@@ -30,11 +30,12 @@ pub enum Request {
 pub enum Response {
     NewImage,
     InvalidGallery,
+    BadRequest { message: String },
 }
 
 #[async_trait]
 pub trait InflightRequest {
-    fn request(&self) -> &Request;
+    fn request(&self) -> anyhow::Result<&Request>;
     async fn respond(self: Box<Self>, response: Response) -> anyhow::Result<()>;
 }
 
