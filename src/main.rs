@@ -33,10 +33,10 @@ use message_api::{InflightRequest, MessageReceiver, MessageSource};
 pub use message_api::{Request, Response};
 
 mod unix_socket_listener;
-use unix_socket_listener::UnixSocketReceiver;
+use unix_socket_listener::{UnixListenerConfig, UnixSocketReceiver};
 
 mod mqtt_listener;
-use mqtt_listener::MQTTReceiver;
+use mqtt_listener::{MQTTListenerConfig, MQTTReceiver};
 
 #[derive(Parser)]
 struct Cli {
@@ -134,39 +134,18 @@ impl ApplicationState {
         Ok(())
     }
 
-    pub async fn connect_listener(&mut self) -> anyhow::Result<()> {
-        fn type_erase<R>(r: Result<R>) -> Result<Box<dyn MessageReceiver + Send>>
-        where
-            R: MessageReceiver + Send + 'static,
-        {
-            match r {
-                Ok(o) => Ok(Box::new(o)),
-                Err(e) => Err(e),
-            }
-        }
+    pub async fn connect_listener(
+        &mut self,
+        listener: &ListenerConfiguration,
+    ) -> anyhow::Result<()> {
+        let source: Box<dyn MessageReceiver + Send> = match listener {
+            ListenerConfiguration::UnixSocket(cfg) => Box::new(UnixSocketReceiver::new(cfg).await?),
+            ListenerConfiguration::MQTT(cfg) => Box::new(MQTTReceiver::new(cfg).await?),
+        };
 
-        let receivers: Vec<Result<Box<dyn MessageReceiver + Send>>> = vec![
-            type_erase(MQTTReceiver::new().await),
-            type_erase(UnixSocketReceiver::new().await),
-        ];
-
-        let mut any_ok = false;
-        for r in receivers.into_iter() {
-            match r {
-                Ok(listener) => {
-                    any_ok = true;
-                    self.message_sources
-                        .push(MessageSource::new(listener, self.message_input.clone()));
-                }
-                Err(err) => eprintln!("Failed to create message listener: {err}"),
-            }
-        }
-
-        if any_ok {
-            Ok(())
-        } else {
-            bail!("Failed to create any message listeners!")
-        }
+        self.message_sources
+            .push(MessageSource::new(source, self.message_input.clone()));
+        Ok(())
     }
 
     pub async fn update(&mut self) {
@@ -284,7 +263,7 @@ impl ApplicationState {
         }
     }
 
-    pub fn update_configuration(&mut self, config: &Configuration) -> Result<()> {
+    pub async fn update_configuration(&mut self, config: &Configuration) -> Result<()> {
         for mut gallery in config.galleries.iter().cloned() {
             for folder in gallery.sources.iter_mut() {
                 if let Cow::Owned(path) = expand_tilde(folder)? {
@@ -306,8 +285,23 @@ impl ApplicationState {
 
         self.update_interval = time::interval(Duration::from_millis(config.update_interval_ms));
 
+        for listener in &config.listeners {
+            self.connect_listener(&listener).await?;
+        }
+
         Ok(())
     }
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type")]
+enum ListenerConfiguration {
+    UnixSocket(UnixListenerConfig),
+    MQTT(MQTTListenerConfig),
+}
+
+fn default_listeners() -> Vec<ListenerConfiguration> {
+    vec![ListenerConfiguration::UnixSocket(Default::default())]
 }
 
 #[derive(Deserialize, Debug)]
@@ -316,9 +310,12 @@ struct Configuration {
     pub update_interval_ms: u64,
     pub default_gallery: String,
     pub galleries: Vec<Gallery>,
+
+    #[serde(default = "default_listeners")]
+    pub listeners: Vec<ListenerConfiguration>,
 }
 
-fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<()> {
+async fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<()> {
     let make_ctx = || anyhow!("Failed to open config file '{}'", config_file.display());
 
     let mut cfg = std::fs::File::open(config_file).context(make_ctx())?;
@@ -329,6 +326,7 @@ fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<
     let cfg: Configuration = toml::from_str(&text).context("Failed to parse configuration")?;
 
     app.update_configuration(&cfg)
+        .await
         .context("Failed to apply configuration")?;
 
     Ok(())
@@ -379,9 +377,7 @@ async fn main() -> Result<()> {
         gallerica::project_dirs().config_dir().join("config.toml")
     };
 
-    read_configuration(&mut state, &config_path)?;
-
-    state.connect_listener().await?;
+    read_configuration(&mut state, &config_path).await?;
 
     state.run().await;
     Ok(())

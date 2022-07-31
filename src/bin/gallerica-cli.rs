@@ -1,4 +1,8 @@
-use std::{fs::create_dir_all, os::unix::net::UnixStream, path::Path};
+use std::{
+    fs::create_dir_all,
+    os::unix::net::UnixStream,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use clap::Parser;
@@ -11,6 +15,12 @@ use gallerica::{project_dirs, Request, Response};
 struct Cli {
     #[clap(subcommand)]
     command: Request,
+
+    /// Path to the unix socket file on which a gallerica daemon is listening.
+    /// May be an absolute or relative path.
+    /// Relative paths are relative to the system runtime directory (XDG_RUNTIME_DIR).
+    #[clap(short, long, default_value = "gallerica.sock")]
+    socket: PathBuf,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -18,7 +28,7 @@ fn main() -> anyhow::Result<()> {
 
     let dirs = project_dirs();
     let path = dirs.runtime_dir().unwrap_or_else(|| Path::new("/tmp"));
-    let file = path.join("gallerica.sock");
+    let file = path.join(cli.socket);
 
     let stream = (|| {
         create_dir_all(path)?;

@@ -1,7 +1,17 @@
 use crate::message_api::*;
+use anyhow::{bail, Context};
 use async_trait::async_trait;
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize, Debug)]
+pub struct MQTTListenerConfig {
+    pub client_id: String,
+    pub host: String,
+    pub port: u16,
+
+    pub topic: String,
+}
 
 #[derive(Deserialize)]
 struct RequestData {
@@ -60,11 +70,28 @@ pub struct MQTTReceiver {
 }
 
 impl MQTTReceiver {
-    pub async fn new() -> anyhow::Result<Self> {
-        let (client, connection) =
-            AsyncClient::new(MqttOptions::new("test", "localhost", 1883), 10);
+    pub async fn new(config: &MQTTListenerConfig) -> anyhow::Result<Self> {
+        let (client, mut connection) = AsyncClient::new(
+            MqttOptions::new(&config.client_id, &config.host, config.port),
+            10,
+        );
 
-        client.subscribe("#", QoS::AtLeastOnce).await?;
+        let event = connection.poll().await.with_context(|| {
+            format!(
+                "Connecting to MQTT server at '{}:{}'",
+                config.host, config.port
+            )
+        })?;
+
+        use rumqttc::{Event::Incoming, Packet::ConnAck};
+        if !matches!(event, Incoming(ConnAck(_))) {
+            bail!("Failed to connect");
+        }
+
+        client
+            .subscribe(&config.topic, QoS::AtLeastOnce)
+            .await
+            .with_context(|| format!("Subscribing to topic '{}'", config.topic))?;
 
         Ok(MQTTReceiver { connection, client })
     }

@@ -12,6 +12,20 @@ use tokio::{
     net::{UnixListener, UnixStream},
 };
 
+#[derive(serde::Deserialize, Debug)]
+pub struct UnixListenerConfig {
+    #[serde(default)]
+    pub path_to_socket: PathBuf,
+}
+
+impl Default for UnixListenerConfig {
+    fn default() -> Self {
+        Self {
+            path_to_socket: "gallerica.sock".into(),
+        }
+    }
+}
+
 struct UnixRequest {
     pub request: anyhow::Result<Request>,
     pub stream: UnixStream,
@@ -41,10 +55,10 @@ pub struct UnixSocketReceiver {
 }
 
 impl UnixSocketReceiver {
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new(config: &UnixListenerConfig) -> anyhow::Result<Self> {
         let dirs = project_dirs();
         let path = dirs.runtime_dir().unwrap_or_else(|| Path::new("/tmp"));
-        let file = path.join("gallerica.sock");
+        let file = path.join(&config.path_to_socket);
 
         use anyhow::Ok;
         (|| {
