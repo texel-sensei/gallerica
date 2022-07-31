@@ -12,16 +12,20 @@ use tokio::{
     net::{UnixListener, UnixStream},
 };
 
+fn default_path() -> PathBuf {
+    "gallerica.sock".into()
+}
+
 #[derive(serde::Deserialize, Debug)]
 pub struct UnixListenerConfig {
-    #[serde(default)]
+    #[serde(default = "default_path")]
     pub path_to_socket: PathBuf,
 }
 
 impl Default for UnixListenerConfig {
     fn default() -> Self {
         Self {
-            path_to_socket: "gallerica.sock".into(),
+            path_to_socket: default_path(),
         }
     }
 }
