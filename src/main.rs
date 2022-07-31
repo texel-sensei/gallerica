@@ -36,7 +36,7 @@ mod unix_socket_listener;
 use unix_socket_listener::{UnixListenerConfig, UnixSocketReceiver};
 
 mod mqtt_listener;
-use mqtt_listener::{MQTTListenerConfig, MQTTReceiver};
+use mqtt_listener::{MqttListenerConfig, MqttReceiver};
 
 #[derive(Parser)]
 struct Cli {
@@ -140,7 +140,7 @@ impl ApplicationState {
     ) -> anyhow::Result<()> {
         let source: Box<dyn MessageReceiver + Send> = match listener {
             ListenerConfiguration::UnixSocket(cfg) => Box::new(UnixSocketReceiver::new(cfg).await?),
-            ListenerConfiguration::MQTT(cfg) => Box::new(MQTTReceiver::new(cfg).await?),
+            ListenerConfiguration::Mqtt(cfg) => Box::new(MqttReceiver::new(cfg).await?),
         };
 
         self.message_sources
@@ -286,7 +286,7 @@ impl ApplicationState {
         self.update_interval = time::interval(Duration::from_millis(config.update_interval_ms));
 
         for listener in &config.listeners {
-            self.connect_listener(&listener).await?;
+            self.connect_listener(listener).await?;
         }
 
         Ok(())
@@ -297,7 +297,8 @@ impl ApplicationState {
 #[serde(tag = "type")]
 enum ListenerConfiguration {
     UnixSocket(UnixListenerConfig),
-    MQTT(MQTTListenerConfig),
+    #[serde(rename = "MQTT")]
+    Mqtt(MqttListenerConfig),
 }
 
 fn default_listeners() -> Vec<ListenerConfiguration> {

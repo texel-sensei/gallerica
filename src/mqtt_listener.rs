@@ -5,7 +5,7 @@ use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug)]
-pub struct MQTTListenerConfig {
+pub struct MqttListenerConfig {
     pub client_id: String,
     pub host: String,
     pub port: u16,
@@ -23,13 +23,13 @@ struct RequestData {
     pub correlation_data: Option<String>,
 }
 
-struct MQTTRequest {
+struct MqttRequest {
     pub data: anyhow::Result<RequestData>,
     pub client: AsyncClient,
 }
 
 #[async_trait]
-impl InflightRequest for MQTTRequest {
+impl InflightRequest for MqttRequest {
     fn request(&self) -> anyhow::Result<&Request> {
         match self.data.as_ref() {
             Ok(data) => Ok(&data.request),
@@ -64,13 +64,13 @@ impl InflightRequest for MQTTRequest {
     }
 }
 
-pub struct MQTTReceiver {
+pub struct MqttReceiver {
     connection: EventLoop,
     client: AsyncClient,
 }
 
-impl MQTTReceiver {
-    pub async fn new(config: &MQTTListenerConfig) -> anyhow::Result<Self> {
+impl MqttReceiver {
+    pub async fn new(config: &MqttListenerConfig) -> anyhow::Result<Self> {
         let (client, mut connection) = AsyncClient::new(
             MqttOptions::new(&config.client_id, &config.host, config.port),
             10,
@@ -93,18 +93,18 @@ impl MQTTReceiver {
             .await
             .with_context(|| format!("Subscribing to topic '{}'", config.topic))?;
 
-        Ok(MQTTReceiver { connection, client })
+        Ok(MqttReceiver { connection, client })
     }
 }
 
 #[async_trait]
-impl MessageReceiver for MQTTReceiver {
+impl MessageReceiver for MqttReceiver {
     async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest + Send>> {
         use rumqttc::{Event::Incoming, Packet::Publish};
 
         loop {
             if let Incoming(Publish(publish)) = self.connection.poll().await? {
-                return Ok(Box::new(MQTTRequest {
+                return Ok(Box::new(MqttRequest {
                     data: serde_json::from_slice(&publish.payload).map_err(|e| e.into()),
                     client: self.client.clone(),
                 }));
