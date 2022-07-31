@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use circular_queue::CircularQueue;
 use clap::Parser;
 use directories::UserDirs;
 use rand::prelude::*;
@@ -22,7 +23,10 @@ use tokio::{
     pin,
     process::Command,
     select, signal,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Mutex,
+    },
     task::JoinHandle,
     time::{self, Duration, Interval},
 };
@@ -77,6 +81,14 @@ struct ApplicationState {
     /// Only one update is buffered, if a third update arrives, while the first is still running,
     /// the second one is discarded in favor for the third.
     pending_update: Option<Command>,
+
+    /// Buffer of recently selected items.
+    /// If a path would be selected by `select_random_image` that's in this buffer, a new item will
+    /// be chosen instead.
+    /// Up to `number_retries` attempts will be done at selecting an image.
+    recenty_selected: Mutex<CircularQueue<PathBuf>>,
+
+    number_retries: u32,
 }
 
 fn parse_args<T, S>(args: T) -> impl Iterator<Item = CmdLinePart>
@@ -119,6 +131,8 @@ impl ApplicationState {
             message_input: sender,
             update_task: None,
             pending_update: None,
+            recenty_selected: Mutex::new(CircularQueue::with_capacity(default_buffer_size())),
+            number_retries: default_retries(),
         })
     }
 
@@ -151,7 +165,7 @@ impl ApplicationState {
     pub async fn update(&mut self) {
         let mut cmd = Command::new(&self.display_command);
 
-        let replacement = match self.select_random_image() {
+        let replacement = match self.select_random_image().await {
             Some(path) => path,
             None => return,
         };
@@ -180,19 +194,42 @@ impl ApplicationState {
         }
     }
 
-    fn select_random_image(&self) -> Option<PathBuf> {
+    /// Iterate all folders of the `current_gallery` and select one file at random.
+    /// Previously selected files will be buffered in `recenty_selected` and are less likely to be
+    /// selected again.
+    async fn select_random_image(&self) -> Option<PathBuf> {
         let source_folders = &self.galleries.get(self.current_gallery.as_ref()?)?.sources;
 
         let mut rng = rand::thread_rng();
 
-        let all_files = source_folders
+        let all_files: Vec<_> = source_folders
             .iter()
             .filter_map(|dir| read_dir(dir).ok())
             .flatten()
             .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path());
+            .map(|entry| entry.path())
+            .collect();
 
-        all_files.choose(&mut rng)
+        let mut tries_left = self.number_retries;
+        loop {
+            let selection = match all_files.choose(&mut rng) {
+                Some(p) => p,
+                None => return None,
+            };
+
+            if tries_left == 0 {
+                return Some(selection.to_path_buf());
+            }
+
+            let mut buf = self.recenty_selected.lock().await;
+
+            if !buf.iter().any(|e| e == selection) {
+                buf.push(selection.to_path_buf());
+                return Some(selection.to_path_buf());
+            }
+
+            tries_left -= 1;
+        }
     }
 
     async fn handle_message(&mut self, msg: Box<dyn InflightRequest>) {
@@ -289,6 +326,14 @@ impl ApplicationState {
             self.connect_listener(listener).await?;
         }
 
+        self.number_retries = config.number_retries;
+        {
+            let mut buf = self.recenty_selected.lock().await;
+            if config.recent_image_buffer_size != buf.capacity() {
+                *buf = CircularQueue::with_capacity(config.recent_image_buffer_size);
+            }
+        }
+
         Ok(())
     }
 }
@@ -305,6 +350,13 @@ fn default_listeners() -> Vec<ListenerConfiguration> {
     vec![ListenerConfiguration::UnixSocket(Default::default())]
 }
 
+fn default_buffer_size() -> usize {
+    3
+}
+fn default_retries() -> u32 {
+    3
+}
+
 #[derive(Deserialize, Debug)]
 struct Configuration {
     pub command_line: String,
@@ -314,6 +366,19 @@ struct Configuration {
 
     #[serde(default = "default_listeners")]
     pub listeners: Vec<ListenerConfiguration>,
+
+    /// Number of image paths the daemon will remember.
+    /// Each time an image is selected, the path to that image will be cached.
+    /// If selecting a new random image would result an image in this cache,
+    /// then the daemon will reroll and select a new one.
+    /// Up to `number_retries` tries at selecting an image are performed.
+    #[serde(default = "default_buffer_size")]
+    pub recent_image_buffer_size: usize,
+
+    /// Number of tries when avoiding recent images.
+    /// Set to zero to disable this feature.
+    #[serde(default = "default_retries")]
+    pub number_retries: u32,
 }
 
 async fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<()> {
