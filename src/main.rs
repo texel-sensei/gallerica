@@ -28,7 +28,7 @@ use tokio::{
         Mutex,
     },
     task::JoinHandle,
-    time::{self, Duration, Interval},
+    time::Duration,
 };
 
 mod message_api;
@@ -41,6 +41,9 @@ use unix_socket_listener::{UnixListenerConfig, UnixSocketReceiver};
 
 mod mqtt_listener;
 use mqtt_listener::{MqttListenerConfig, MqttReceiver};
+
+mod timer;
+use timer::{PausableInterval, TickResult};
 
 #[derive(Parser)]
 struct Cli {
@@ -65,7 +68,7 @@ struct Gallery {
 struct ApplicationState {
     galleries: HashMap<String, Gallery>,
     current_gallery: Option<String>,
-    update_interval: Interval,
+    update_interval: PausableInterval,
     display_command: OsString,
     display_args: Vec<CmdLinePart>,
 
@@ -104,7 +107,7 @@ where
 }
 
 impl ApplicationState {
-    pub fn new<T, S>(update_command: T, update_interval: Interval) -> Result<Self>
+    pub fn new<T, S>(update_command: T, update_interval: Duration) -> Result<Self>
     where
         T: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
@@ -123,7 +126,7 @@ impl ApplicationState {
         Ok(ApplicationState {
             galleries: HashMap::new(),
             current_gallery: None,
-            update_interval,
+            update_interval: PausableInterval::new(update_interval),
             display_command: cmd,
             display_args: parse_args(cmdline).collect(),
             message_sources: Vec::new(),
@@ -242,7 +245,9 @@ impl ApplicationState {
                 Response::NewImage
             }
             Ok(UpdateInterval { millis }) => {
-                self.update_interval = time::interval(Duration::from_millis(*millis));
+                let was_paused = self.update_interval.is_paused();
+                self.update_interval = PausableInterval::new(Duration::from_millis(*millis));
+                self.update_interval.pause(was_paused);
                 Response::NewImage
             }
             Ok(SelectGallery { name, refresh }) => {
@@ -256,6 +261,10 @@ impl ApplicationState {
 
                     Response::NewImage
                 }
+            }
+            Ok(s @ Pause | s @ Resume) => {
+                self.update_interval.pause(matches!(s, Pause));
+                Response::Ok
             }
             Err(err) => Response::BadRequest {
                 message: err.to_string(),
@@ -275,7 +284,7 @@ impl ApplicationState {
         }
         loop {
             select! {
-                _ = self.update_interval.tick() => {
+                TickResult::Completed = self.update_interval.tick() => {
                     self.update().await;
                 },
 
@@ -320,7 +329,8 @@ impl ApplicationState {
         self.display_command = cmd;
         self.display_args = parse_args(cmdline).collect();
 
-        self.update_interval = time::interval(Duration::from_millis(config.update_interval_ms));
+        self.update_interval =
+            PausableInterval::new(Duration::from_millis(config.update_interval_ms));
 
         for listener in &config.listeners {
             self.connect_listener(listener).await?;
@@ -430,10 +440,7 @@ fn expand_tilde(path: &Path) -> Result<Cow<Path>> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut state = ApplicationState::new(
-        "echo {image}".split(' '),
-        time::interval(Duration::from_millis(10000)),
-    )?;
+    let mut state = ApplicationState::new("echo {image}".split(' '), Duration::from_millis(10000))?;
 
     let cli = Cli::parse();
 

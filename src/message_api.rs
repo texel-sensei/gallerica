@@ -9,6 +9,14 @@ pub enum Request {
     /// Immediately show the next image, no matter the update rate.
     NextImage,
 
+    /// Stop selecting new images until a `Resume` message is sent.
+    /// Any currently running and pending updates will be completed.
+    Pause,
+
+    /// Resume image selection.
+    /// See `Pause` for more information.
+    Resume,
+
     /// Change the time between two images
     UpdateInterval {
         /// Number of milliseconds to wait before showing the next image
@@ -29,6 +37,7 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Response {
+    Ok,
     NewImage,
     InvalidGallery,
     BadRequest { message: String },
