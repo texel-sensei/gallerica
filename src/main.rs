@@ -332,6 +332,10 @@ impl ApplicationState {
         self.update_interval =
             PausableInterval::new(Duration::from_millis(config.update_interval_ms));
 
+        if !config.update_immediately {
+            self.update_interval.tick().await;
+        }
+
         for listener in &config.listeners {
             self.connect_listener(listener).await?;
         }
@@ -366,6 +370,7 @@ fn default_buffer_size() -> usize {
 fn default_retries() -> u32 {
     3
 }
+fn default_update_immediately() -> bool { true }
 
 #[derive(Deserialize, Debug)]
 struct Configuration {
@@ -373,6 +378,11 @@ struct Configuration {
     pub update_interval_ms: u64,
     pub default_gallery: String,
     pub galleries: Vec<Gallery>,
+
+    /// Whether a new image should be selected immediately on startup (true) or only after the first
+    /// time interval has passed (false).
+    #[serde(default = "default_update_immediately")]
+    pub update_immediately: bool,
 
     #[serde(default = "default_listeners")]
     pub listeners: Vec<ListenerConfiguration>,
