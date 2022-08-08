@@ -73,8 +73,8 @@ struct ApplicationState {
     display_args: Vec<CmdLinePart>,
 
     message_sources: Vec<MessageSource>,
-    message_queue: Receiver<anyhow::Result<Box<dyn InflightRequest + Send>>>,
-    message_input: Sender<anyhow::Result<Box<dyn InflightRequest + Send>>>,
+    message_queue: Receiver<anyhow::Result<Box<dyn InflightRequest>>>,
+    message_input: Sender<anyhow::Result<Box<dyn InflightRequest>>>,
 
     /// Task which runs the update subprocess
     update_task: Option<JoinHandle<io::Result<ExitStatus>>>,

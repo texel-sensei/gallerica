@@ -99,7 +99,7 @@ impl MqttReceiver {
 
 #[async_trait]
 impl MessageReceiver for MqttReceiver {
-    async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest + Send>> {
+    async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest>> {
         use rumqttc::{Event::Incoming, Packet::Publish};
 
         loop {

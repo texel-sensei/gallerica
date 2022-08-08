@@ -44,17 +44,17 @@ pub enum Response {
 }
 
 #[async_trait]
-pub trait InflightRequest {
+pub trait InflightRequest: Send {
     fn request(&self) -> anyhow::Result<&Request>;
     async fn respond(self: Box<Self>, response: Response) -> anyhow::Result<()>;
 }
 
 #[async_trait]
 pub trait MessageReceiver {
-    async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest + Send>>;
+    async fn receive_message(&mut self) -> anyhow::Result<Box<dyn InflightRequest>>;
 }
 
-type MessageChannel = tokio::sync::mpsc::Sender<anyhow::Result<Box<dyn InflightRequest + Send>>>;
+type MessageChannel = tokio::sync::mpsc::Sender<anyhow::Result<Box<dyn InflightRequest>>>;
 pub struct MessageSource(JoinHandle<()>);
 
 impl MessageSource {
