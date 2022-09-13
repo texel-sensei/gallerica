@@ -210,6 +210,7 @@ impl ApplicationState {
             .filter_map(|dir| read_dir(dir).ok())
             .flatten()
             .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_file())
             .map(|entry| entry.path())
             .collect();
 
@@ -370,7 +371,9 @@ fn default_buffer_size() -> usize {
 fn default_retries() -> u32 {
     3
 }
-fn default_update_immediately() -> bool { true }
+fn default_update_immediately() -> bool {
+    true
+}
 
 #[derive(Deserialize, Debug)]
 struct Configuration {
