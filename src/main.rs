@@ -67,7 +67,6 @@ struct Gallery {
 
 struct ApplicationState {
     galleries: HashMap<String, Gallery>,
-    current_gallery: Option<String>,
     update_interval: PausableInterval,
     display_command: OsString,
     display_args: Vec<CmdLinePart>,
@@ -85,13 +84,21 @@ struct ApplicationState {
     /// the second one is discarded in favor for the third.
     pending_update: Option<Command>,
 
+    number_retries: u32,
+
+    /// Part of the state that can be persisted to the disk and loaded on restart
+    persistent: PersistentState,
+}
+
+struct PersistentState {
+    /// Name of the currently selected gallery, if there is one
+    pub current_gallery: Option<String>,
+
     /// Buffer of recently selected items.
     /// If a path would be selected by `select_random_image` that's in this buffer, a new item will
     /// be chosen instead.
     /// Up to `number_retries` attempts will be done at selecting an image.
-    recenty_selected: Mutex<CircularQueue<PathBuf>>,
-
-    number_retries: u32,
+    pub recenty_selected: Mutex<CircularQueue<PathBuf>>,
 }
 
 fn parse_args<T, S>(args: T) -> impl Iterator<Item = CmdLinePart>
@@ -125,7 +132,6 @@ impl ApplicationState {
 
         Ok(ApplicationState {
             galleries: HashMap::new(),
-            current_gallery: None,
             update_interval: PausableInterval::new(update_interval),
             display_command: cmd,
             display_args: parse_args(cmdline).collect(),
@@ -134,8 +140,11 @@ impl ApplicationState {
             message_input: sender,
             update_task: None,
             pending_update: None,
-            recenty_selected: Mutex::new(CircularQueue::with_capacity(default_buffer_size())),
             number_retries: default_retries(),
+            persistent: PersistentState {
+                current_gallery: None,
+                recenty_selected: Mutex::new(CircularQueue::with_capacity(default_buffer_size())),
+            },
         })
     }
 
@@ -147,7 +156,7 @@ impl ApplicationState {
         if !self.galleries.contains_key(name) {
             bail!("Invalid gallery '{}'", name);
         }
-        self.current_gallery = Some(name.to_owned());
+        self.persistent.current_gallery = Some(name.to_owned());
         Ok(())
     }
 
@@ -201,7 +210,10 @@ impl ApplicationState {
     /// Previously selected files will be buffered in `recenty_selected` and are less likely to be
     /// selected again.
     async fn select_random_image(&self) -> Option<PathBuf> {
-        let source_folders = &self.galleries.get(self.current_gallery.as_ref()?)?.sources;
+        let source_folders = &self
+            .galleries
+            .get(self.persistent.current_gallery.as_ref()?)?
+            .sources;
 
         let mut rng = rand::thread_rng();
 
@@ -225,7 +237,7 @@ impl ApplicationState {
                 return Some(selection.to_path_buf());
             }
 
-            let mut buf = self.recenty_selected.lock().await;
+            let mut buf = self.persistent.recenty_selected.lock().await;
 
             if !buf.iter().any(|e| e == selection) {
                 buf.push(selection.to_path_buf());
@@ -343,7 +355,7 @@ impl ApplicationState {
 
         self.number_retries = config.number_retries;
         {
-            let mut buf = self.recenty_selected.lock().await;
+            let mut buf = self.persistent.recenty_selected.lock().await;
             if config.recent_image_buffer_size != buf.capacity() {
                 *buf = CircularQueue::with_capacity(config.recent_image_buffer_size);
             }
