@@ -9,6 +9,7 @@ use std::{
     io::{self, Read},
     path::{Component, Path, PathBuf},
     process::ExitStatus,
+    sync::Mutex,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -23,10 +24,7 @@ use tokio::{
     pin,
     process::Command,
     select, signal,
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        Mutex,
-    },
+    sync::mpsc::{self, Receiver, Sender},
     task::JoinHandle,
     time::Duration,
 };
@@ -237,7 +235,7 @@ impl ApplicationState {
                 return Some(selection.to_path_buf());
             }
 
-            let mut buf = self.persistent.recenty_selected.lock().await;
+            let mut buf = self.persistent.recenty_selected.lock().unwrap();
 
             if !buf.iter().any(|e| e == selection) {
                 buf.push(selection.to_path_buf());
@@ -355,7 +353,7 @@ impl ApplicationState {
 
         self.number_retries = config.number_retries;
         {
-            let mut buf = self.persistent.recenty_selected.lock().await;
+            let mut buf = self.persistent.recenty_selected.lock().unwrap();
             if config.recent_image_buffer_size != buf.capacity() {
                 *buf = CircularQueue::with_capacity(config.recent_image_buffer_size);
             }
