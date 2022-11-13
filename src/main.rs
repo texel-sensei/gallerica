@@ -343,10 +343,6 @@ impl ApplicationState {
         self.update_interval =
             PausableInterval::new(Duration::from_millis(config.update_interval_ms));
 
-        if !config.update_immediately {
-            self.update_interval.tick().await;
-        }
-
         for listener in &config.listeners {
             self.connect_listener(listener).await?;
         }
@@ -357,6 +353,10 @@ impl ApplicationState {
             if config.recent_image_buffer_size != buf.capacity() {
                 *buf = CircularQueue::with_capacity(config.recent_image_buffer_size);
             }
+        }
+
+        if !config.update_immediately {
+            self.update_interval.tick().await;
         }
 
         Ok(())
