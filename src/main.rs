@@ -18,7 +18,7 @@ use circular_queue::CircularQueue;
 use clap::Parser;
 use directories::UserDirs;
 use rand::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use tokio::{
     pin,
@@ -84,10 +84,14 @@ struct ApplicationState {
 
     number_retries: u32,
 
+    /// File where persistent state should be stored
+    /// If None, then no persistent state is stored
+    storage_file: Option<PathBuf>,
     /// Part of the state that can be persisted to the disk and loaded on restart
     persistent: PersistentState,
 }
 
+#[derive(Serialize, Deserialize)]
 struct PersistentState {
     /// Name of the currently selected gallery, if there is one
     pub current_gallery: Option<String>,
@@ -139,6 +143,7 @@ impl ApplicationState {
             update_task: None,
             pending_update: None,
             number_retries: default_retries(),
+            storage_file: Some("gallerica.json".into()),
             persistent: PersistentState {
                 current_gallery: None,
                 recenty_selected: Mutex::new(CircularQueue::with_capacity(default_buffer_size())),
@@ -148,6 +153,29 @@ impl ApplicationState {
 
     pub fn add_gallery(&mut self, gallery: Gallery) {
         self.galleries.insert(gallery.name.clone(), gallery);
+    }
+
+    pub fn update_persistent_state(&mut self, new_state: PersistentState) -> Result<()> {
+        let target_capacity = self.persistent.recenty_selected.lock().unwrap().capacity();
+        let actual_capacity = new_state.recenty_selected.lock().unwrap().capacity();
+
+        if actual_capacity != target_capacity {
+            let new: &mut CircularQueue<_> = &mut new_state.recenty_selected.lock().unwrap();
+            let old = std::mem::replace(new, CircularQueue::with_capacity(target_capacity));
+
+            for item in old.asc_iter() {
+                new.push(item.to_path_buf());
+            }
+        }
+
+        if let Some(gallery) = &new_state.current_gallery {
+            if !self.galleries.contains_key(gallery) {
+                bail!("State uses invalid gallery '{}'", gallery);
+            }
+        }
+
+        self.persistent = new_state;
+        Ok(())
     }
 
     pub fn change_gallery(&mut self, name: &str) -> Result<()> {
@@ -188,6 +216,22 @@ impl ApplicationState {
                 repl
             }
         }));
+
+        if let Some(filename) = &self.storage_file {
+            let dirs = project_dirs();
+            let state_file = dirs
+                .state_dir()
+                .unwrap_or_else(|| dirs.cache_dir())
+                .join(filename);
+            let result: Result<()> = (|| {
+                let state_file = std::fs::File::create(state_file)?;
+                serde_json::to_writer(state_file, &self.persistent)?;
+                Ok(())
+            })();
+            if let Err(e) = result {
+                eprintln!("Error persisting state: '{e}'");
+            }
+        }
 
         match self.update_task {
             Some(_) => {
@@ -355,6 +399,33 @@ impl ApplicationState {
             }
         }
 
+        self.storage_file = config.storage_file.clone();
+
+        if let Some(filename) = &self.storage_file {
+            let dirs = project_dirs();
+            let state_dir = dirs.state_dir().unwrap_or_else(|| dirs.cache_dir());
+            std::fs::create_dir_all(state_dir)?;
+            let state_file = state_dir.join(filename);
+            if state_file.exists() {
+                let make_ctx = || anyhow!("Failed to open state file '{}'", state_file.display());
+                let mut state = std::fs::File::open(&state_file).with_context(make_ctx)?;
+
+                let mut text = String::new();
+                state.read_to_string(&mut text).with_context(make_ctx)?;
+
+                let state: PersistentState =
+                    serde_json::from_str(&text).context("Failed to parse persisted state")?;
+                if self.update_persistent_state(state).is_err() {
+                    std::fs::remove_file(&state_file).with_context(|| {
+                        anyhow!(
+                            "Failed to delete corrupt state file '{}'",
+                            state_file.display()
+                        )
+                    })?;
+                }
+            }
+        }
+
         if !config.update_immediately {
             self.update_interval.tick().await;
         }
@@ -412,6 +483,12 @@ struct Configuration {
     /// Set to zero to disable this feature.
     #[serde(default = "default_retries")]
     pub number_retries: u32,
+
+    /// File where persistent state should be stored.
+    /// Relative paths are interpreted relative to the state directory,
+    /// or the cache directory if the state directory is not available.
+    /// If this option is omitted, no state is persisted.
+    pub storage_file: Option<PathBuf>,
 }
 
 async fn read_configuration(app: &mut ApplicationState, config_file: &Path) -> Result<()> {
