@@ -29,7 +29,7 @@ pub enum Request {
         name: String,
 
         /// Whether to immediately refresh the display or wait till the next scheduled update
-        #[clap(long, parse(try_from_str), default_value = "true")]
+        #[clap(long, action=clap::ArgAction::Set, value_parser, default_value = "true")]
         refresh: bool,
     },
 }
