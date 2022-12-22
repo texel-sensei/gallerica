@@ -39,7 +39,9 @@ fn main() -> anyhow::Result<()> {
         for file in path.read_dir()?.filter_map(|e| e.ok()) {
             if file.file_type()?.is_socket() {
                 match send_via_file(&file.path(), &cli.command) {
-                    Ok(response) => println!("{}: {:?}", file.file_name().to_string_lossy(), response),
+                    Ok(response) => {
+                        println!("{}: {:?}", file.file_name().to_string_lossy(), response)
+                    }
                     Err(e) => eprintln!("Failed sending to {}: {e}", file.path().display()),
                 }
             }
@@ -61,4 +63,15 @@ fn send_via_file(file: &Path, command: &Request) -> anyhow::Result<Response> {
     stream.shutdown(std::net::Shutdown::Write)?;
 
     Ok(serde_json::from_reader(&stream)?)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_command_parsing() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 }
