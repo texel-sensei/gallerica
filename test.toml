@@ -1,0 +1,18 @@
+command_line = "echo {image}"
+default_gallery = "default"
+update_interval_ms = 3000
+number_retries = 1000
+recent_image_buffer_size = 1
+
+[[listeners]]
+type = "MQTT"
+
+client_id = "test"
+host = "localhost"
+port = 1883
+
+topic = "*"
+
+[[galleries]]
+name = "default"
+folders = [ "src" ]

@@ -101,7 +101,14 @@ struct PersistentState {
     /// be chosen instead.
     /// Up to `number_retries` attempts will be done at selecting an image.
     pub recenty_selected: Mutex<CircularQueue<PathBuf>>,
+
+    /// Whether the daemon is currently paused (true) or cycling through images (false).
+    /// See `Request::Pause`
+    #[serde(default = "default_paused")]
+    pub is_paused: bool,
 }
+
+fn default_paused() -> bool { false }
 
 fn parse_args<T, S>(args: T) -> impl Iterator<Item = CmdLinePart>
 where
@@ -147,6 +154,7 @@ impl ApplicationState {
             persistent: PersistentState {
                 current_gallery: None,
                 recenty_selected: Mutex::new(CircularQueue::with_capacity(default_buffer_size())),
+                is_paused: false,
             },
         })
     }
@@ -175,6 +183,7 @@ impl ApplicationState {
         }
 
         self.persistent = new_state;
+        self.update_interval.pause(self.persistent.is_paused);
         Ok(())
     }
 
@@ -217,21 +226,7 @@ impl ApplicationState {
             }
         }));
 
-        if let Some(filename) = &self.storage_file {
-            let dirs = project_dirs();
-            let state_file = dirs
-                .state_dir()
-                .unwrap_or_else(|| dirs.cache_dir())
-                .join(filename);
-            let result: Result<()> = (|| {
-                let state_file = std::fs::File::create(state_file)?;
-                serde_json::to_writer(state_file, &self.persistent)?;
-                Ok(())
-            })();
-            if let Err(e) = result {
-                eprintln!("Error persisting state: '{e}'");
-            }
-        }
+        self.persist();
 
         match self.update_task {
             Some(_) => {
@@ -319,6 +314,8 @@ impl ApplicationState {
             }
             Ok(s @ Pause | s @ Resume) => {
                 self.update_interval.pause(matches!(s, Pause));
+                self.persistent.is_paused = self.update_interval.is_paused();
+                self.persist();
                 Response::Ok
             }
             Err(err) => Response::BadRequest {
@@ -431,6 +428,27 @@ impl ApplicationState {
         }
 
         Ok(())
+    }
+
+    /// Store persistent state to disk if configured as such.
+    /// If state persistence is turned off, then this is as no-op.
+    fn persist(&self) {
+        if let Some(filename) = &self.storage_file {
+            let dirs = project_dirs();
+            let state_file = dirs
+                .state_dir()
+                .unwrap_or_else(|| dirs.cache_dir())
+                .join(filename);
+            let result: Result<()> = (|| {
+                let state_file = std::fs::File::create(state_file)?;
+                serde_json::to_writer(state_file, &self.persistent)?;
+                Ok(())
+            })();
+            if let Err(e) = result {
+                eprintln!("Error persisting state: '{e}'");
+            }
+        }
+
     }
 }
 
