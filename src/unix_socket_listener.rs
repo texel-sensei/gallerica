@@ -64,13 +64,31 @@ impl UnixSocketReceiver {
         let path = dirs.runtime_dir().unwrap_or_else(|| Path::new("/tmp"));
         let file = path.join(&config.path_to_socket);
 
-        use anyhow::Ok;
         (|| {
             create_dir_all(path)?;
 
-            let listener = UnixListener::bind(&file)?;
+            let listener = match UnixListener::bind(&file) {
+                Ok(l) => l,
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                    // there is already a socket. Check if that socket is in use,
+                    // if not we assume it's from a previous gallerica run and we can delete it.
 
-            Ok(Self {
+                    // check if we can connect. If the socket is live, the connection works and we
+                    // need to bail
+                    let Err(connection_error) = std::os::unix::net::UnixStream::connect(&file) else { anyhow::bail!(e) };
+
+                    // If we get a connection refused, then the socket is dead
+                    if connection_error.kind() == std::io::ErrorKind::ConnectionRefused {
+                        std::fs::remove_file(&file)?;
+                    }
+
+                    // Try again
+                    UnixListener::bind(&file)?
+                }
+                Err(e) => anyhow::bail!(e),
+            };
+
+            anyhow::Ok(Self {
                 path: file.clone(),
                 listener,
             })
